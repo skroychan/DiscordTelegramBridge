@@ -10,22 +10,21 @@ from config import discord_token, discord_chat_id, telegram_token, telegram_chat
 
 telegram_bot = AsyncTeleBot(telegram_token, parse_mode="MarkdownV2")
 
+
 async def download_file(url):
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
             if resp.status == 200:
                 return io.BytesIO(await resp.read())
 
-async def send_to_discord(username, text, attachment_urls=None, quote_username=None, quote_text=None):
+async def send_to_discord(username, text, attachment_url=None, has_spoiler=False, quote_username=None, quote_text=None):
     channel = discord_bot.get_channel(discord_chat_id)
     if channel:
         result = f"**{username}**: {text}"
 
-        files = []
-        if attachment_urls:    
-            for attachment_url in attachment_urls:
-                data = await download_file(attachment_url)
-                files.append(discord.File(data, attachment_url.split("/")[-1]))
+        if attachment_url:    
+            data = await download_file(attachment_url)
+            file = discord.File(data, attachment_url.split("/")[-1], spoiler=has_spoiler)
 
         if quote_text:
             quote_text = quote_text.replace("\n", "\n> ")
@@ -34,7 +33,7 @@ async def send_to_discord(username, text, attachment_urls=None, quote_username=N
             else:
                 result = f"> {quote_text}\n{result}"
 
-        await channel.send(result, files=files)
+        await channel.send(result, file=file)
 
 
 def escape_markdown(str):
@@ -56,25 +55,24 @@ async def send_to_telegram(username, text, attachments=None, quote_username=None
             media_group = []
             for attachment in attachments:
                 if attachment.content_type.startswith("image"):
-                    media_group.append(InputMediaPhoto(attachment.url, show_caption_above_media=True))
+                    media_group.append(InputMediaPhoto(attachment.url, show_caption_above_media=True, has_spoiler=attachment.is_spoiler()))
                 elif attachment.content_type.startswith("video"):
-                    media_group.append(InputMediaVideo(attachment.url, show_caption_above_media=True))
+                    media_group.append(InputMediaVideo(attachment.url, show_caption_above_media=True, has_spoiler=attachment.is_spoiler()))
                 elif attachment.content_type.startswith("audio"):
                     media_group.append(InputMediaPhoto(attachment.url, show_caption_above_media=True))
                 else:
                     media_group.append(InputMediaDocument(attachment.url, show_caption_above_media=True))
                     
             media_group[0].caption = result
-
-            if len(media_group) > 1:
-                await telegram_bot.send_media_group(telegram_chat_id, media_group, message_thread_id=telegram_message_thread_id)
+            
+            await telegram_bot.send_media_group(telegram_chat_id, media_group, message_thread_id=telegram_message_thread_id)
 
         else:
             attachment = attachments[0]
             if attachment.content_type.startswith("image"):
-                await telegram_bot.send_photo(telegram_chat_id, attachment.url, result, show_caption_above_media=True, message_thread_id=telegram_message_thread_id)
+                await telegram_bot.send_photo(telegram_chat_id, attachment.url, result, show_caption_above_media=True, has_spoiler=attachment.is_spoiler(), message_thread_id=telegram_message_thread_id)
             elif attachment.content_type.startswith("video"):
-                await telegram_bot.send_video(telegram_chat_id, attachment.url, caption=result, show_caption_above_media=True, message_thread_id=telegram_message_thread_id)
+                await telegram_bot.send_video(telegram_chat_id, attachment.url, caption=result, show_caption_above_media=True, has_spoiler=attachment.is_spoiler(), message_thread_id=telegram_message_thread_id)
             elif attachment.content_type.startswith("audio"):
                 await telegram_bot.send_audio(telegram_chat_id, attachment.url, result, show_caption_above_media=True, message_thread_id=telegram_message_thread_id)
             else:
@@ -85,7 +83,6 @@ async def send_to_telegram(username, text, attachments=None, quote_username=None
 
 
 class DiscordBot(discord.Client):
-
     async def on_message(self, message):
         if message.author == self.user or message.channel.id != discord_chat_id:
             return
@@ -124,26 +121,29 @@ async def on_message(message):
     if message.from_user.last_name:
         username += " " + message.from_user.last_name
 
-    attachment_urls = []
+    attachment_url = None
+    attachment_filename = None
     if message.photo:
         photo = max(message.photo, key=lambda p: p.file_size)
-        attachment_urls.append(await telegram_bot.get_file_url(photo.file_id))
+        attachment_url = await telegram_bot.get_file_url(photo.file_id)
     elif message.animation:
-        attachment_urls.append(await telegram_bot.get_file_url(message.animation.file_id))
+        attachment_url = await telegram_bot.get_file_url(message.animation.file_id)
+        attachment_filename = message.animation.file_name
     elif message.audio:
-        attachment_urls.append(await telegram_bot.get_file_url(message.audio.file_id))
+        attachment_url = await telegram_bot.get_file_url(message.audio.file_id)
+        attachment_filename = message.audio.file_name
     elif message.sticker:
-        attachment_urls.append(await telegram_bot.get_file_url(message.sticker.file_id))
+        attachment_url = await telegram_bot.get_file_url(message.sticker.file_id)
     elif message.video:
-        attachment_urls.append(await telegram_bot.get_file_url(message.video.file_id))
+        attachment_url = await telegram_bot.get_file_url(message.video.file_id)
+        attachment_filename = message.video.file_name
     elif message.video_note:
-        attachment_urls.append(await telegram_bot.get_file_url(message.video_note.file_id))
+        attachment_url = await telegram_bot.get_file_url(message.video_note.file_id)
     elif message.voice:
-        attachment_urls.append(await telegram_bot.get_file_url(message.voice.file_id))
+        attachment_url = await telegram_bot.get_file_url(message.voice.file_id)
     elif message.document:
-        attachment_urls.append(await telegram_bot.get_file_url(message.document.file_id))
-
-    print(attachment_urls)
+        attachment_url = await telegram_bot.get_file_url(message.document.file_id)
+        attachment_filename = message.document.file_name
 
     if message.reply_to_message:
         if message.quote:
@@ -154,10 +154,10 @@ async def on_message(message):
         if message.reply_to_message.from_user.id != telegram_bot_id:
             quote_author = message.reply_to_message.from_user.first_name
 
-        await send_to_discord(username, text, attachment_urls, quote_author, quote)
+        await send_to_discord(username, text, attachment_url, message.has_media_spoiler, quote_author, quote)
 
     else:
-        await send_to_discord(username, text, attachment_urls)
+        await send_to_discord(username, text, attachment_url, message.has_media_spoiler)
 
 
 intents = discord.Intents.default()
