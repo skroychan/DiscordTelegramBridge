@@ -6,6 +6,7 @@
     "telegram": {
         "token": "token",
         "chatId": 1234567890,
-        "threadId": 1234
+        "threadId": 1234,
+        "botId": 1234567
     }
 }
