@@ -87,13 +87,13 @@ class DiscordBot(discord.Client):
         if message.author == self.user or message.channel.id != discord_chat_id:
             return
 
-        text = message.content
+        text = message.clean_content
         username = message.author.global_name or message.author.name
 
         if message.type == discord.MessageType.reply:
             replied_to = await message.channel.fetch_message(message.reference.message_id)
 
-            quote = replied_to.content
+            quote = replied_to.clean_content
             quote_author = None
             if replied_to.author != self.user:
                 quote_author = replied_to.author.global_name or replied_to.author.name
