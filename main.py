@@ -4,6 +4,7 @@ import os
 from urllib.parse import urlparse, unquote
 
 import discord
+from discord import PartialEmoji, StickerFormatType
 from telebot.async_telebot import AsyncTeleBot
 from telebot.types import InputMediaPhoto, InputMediaVideo, InputMediaAudio, InputMediaDocument
 
@@ -50,7 +51,7 @@ async def send_to_discord(username, text, attachment_url=None, has_spoiler=False
 def escape_markdown(str):
     return re.sub(r"([_\*\[\]\(\)~`>#+\-=|\{\}\.!])", r"\\\1", str)
 
-async def send_to_telegram(username, text, attachments=[], embeds=[], quote_username=None, quote_text=None):
+async def send_to_telegram(username, text, attachments=[], embeds=[], emojis=[], stickers=[], quote_username=None, quote_text=None):
     result = f"*{escape_markdown(username)}*: {escape_markdown(text)}"
 
     if quote_text:
@@ -61,32 +62,60 @@ async def send_to_telegram(username, text, attachments=[], embeds=[], quote_user
         else:
             result = f">{quote_text}\n{result}"
 
-    if attachments or embeds:
-        if len(attachments) + len(embeds) > 1:
+    if attachments or embeds or emojis or stickers:
+        if len(attachments) + len(embeds) + len(emojis) + len(stickers) > 1:
             media_group = []
+
+            for emoji in emojis:
+                if emoji.animated:
+                    media_group.append(InputMediaAnimation(emoji.url, show_caption_above_media=True))
+                else:
+                    media_group.append(InputMediaPhoto(emoji.url, show_caption_above_media=True))
+            
+            for sticker in stickers:
+                if sticker.format == StickerFormatType.apng or sticker.format == StickerFormatType.gif:
+                    media_group.append(InputMediaAnimation(sticker.url, show_caption_above_media=True))
+                elif sticker.format == StickerFormatType.png:
+                    media_group.append(InputMediaPhoto(sticker.url, show_caption_above_media=True))
+
             for attachment in attachments:
                 if attachment.content_type.startswith("image"):
                     media_group.append(InputMediaPhoto(attachment.url, show_caption_above_media=True, has_spoiler=attachment.is_spoiler()))
                 elif attachment.content_type.startswith("video"):
                     media_group.append(InputMediaVideo(attachment.url, show_caption_above_media=True, has_spoiler=attachment.is_spoiler()))
                 elif attachment.content_type.startswith("audio"):
-                    media_group.append(InputMediaPhoto(attachment.url, show_caption_above_media=True))
+                    media_group.append(InputMediaAudio(attachment.url, show_caption_above_media=True))
                 else:
                     media_group.append(InputMediaDocument(attachment.url, show_caption_above_media=True))
 
             for embed in embeds:
-                result = result.replace(escape_markdown(embed.url), "", 1)
                 if embed.type == "image":
                     media_group.append(InputMediaPhoto(embed.image.proxy_url or embed.image.url or embed.url, show_caption_above_media=True))
-                elif embed.type == "video" or embed.type == "gifv":
+                elif embed.type == "video":
                     media_group.append(InputMediaVideo(embed.video.proxy_url or embed.video.url or embed.url, show_caption_above_media=True))
+                elif embed.type == "gifv":
+                    media_group.append(InputMediaAnimation(embed.video.proxy_url or embed.video.url or embed.url, show_caption_above_media=True))
 
             media_group[0].caption = result
 
             await telegram_bot.send_media_group(telegram_chat_id, media_group, message_thread_id=telegram_message_thread_id)
 
         else:
-            if attachments:
+            if emojis:
+                emoji = emojis[0]
+                if emoji.animated:
+                    await telegram_bot.send_animation(telegram_chat_id, emoji.url, caption=result, show_caption_above_media=True, message_thread_id=telegram_message_thread_id)
+                else:
+                    await telegram_bot.send_photo(telegram_chat_id, emoji.url, result, show_caption_above_media=True, message_thread_id=telegram_message_thread_id)
+
+            elif stickers:
+                sticker = stickers[0]
+                if sticker.format == StickerFormatType.apng or sticker.format == StickerFormatType.gif:
+                    await telegram_bot.send_animation(telegram_chat_id, sticker.url, caption=result, show_caption_above_media=True, message_thread_id=telegram_message_thread_id)
+                elif sticker.format == StickerFormatType.png:
+                    await telegram_bot.send_photo(telegram_chat_id, sticker.url, result, show_caption_above_media=True, message_thread_id=telegram_message_thread_id)
+
+            elif attachments:
                 attachment = attachments[0]
                 if attachment.content_type.startswith("image"):
                     if get_extension(get_filename_from_url(attachment.url)) == ".gif":
@@ -100,9 +129,8 @@ async def send_to_telegram(username, text, attachments=[], embeds=[], quote_user
                 else:
                     await telegram_bot.send_document(telegram_chat_id, attachment.url, caption=result, show_caption_above_media=True, message_thread_id=telegram_message_thread_id)
 
-            if embeds:
+            elif embeds:
                 embed = embeds[0]
-                result = result.replace(escape_markdown(embed.url), "", 1)
                 if embed.type == "video" or embed.type == "gifv":
                     await telegram_bot.send_video(telegram_chat_id, embed.video.proxy_url or embed.video.url or embed.url, caption=result, show_caption_above_media=True, message_thread_id=telegram_message_thread_id)
                 elif embed.type == "image":
@@ -123,6 +151,13 @@ class DiscordBot(discord.Client):
         text = message.system_content if message.is_system() else message.clean_content
         username = message.author.display_name or message.author.global_name or message.author.name
 
+        emojis = []
+        for match in re.finditer(r'<a?:[a-zA-Z0-9_]{,32}+:[0-9]{,32}>', text):
+            parsed_emoji = match.group()
+            emoji = PartialEmoji.from_str(parsed_emoji)
+            text = text.replace(parsed_emoji, f":{emoji.name}:")
+            emojis.append(emoji)
+
         if message.type == discord.MessageType.reply:
             replied_to = await message.channel.fetch_message(message.reference.message_id)
 
@@ -131,10 +166,10 @@ class DiscordBot(discord.Client):
             if replied_to.author != self.user:
                 quote_author = replied_to.author.global_name or replied_to.author.name
 
-            await send_to_telegram(username, text, message.attachments, message.embeds, quote_author, quote)
+            await send_to_telegram(username, text, message.attachments, message.embeds, emojis, message.stickers, quote_author, quote)
 
         else:
-            await send_to_telegram(username, text, message.attachments, message.embeds)
+            await send_to_telegram(username, text, message.attachments, message.embeds, emojis, message.stickers)
 
     async def setup_hook(self):
         self.bg_task = self.loop.create_task(self.telegram_task())
@@ -165,7 +200,7 @@ async def on_message(message):
     elif message.audio:
         attachment_url = await telegram_bot.get_file_url(message.audio.file_id)
         attachment_filename = message.audio.file_name
-    elif message.sticker:
+    elif message.sticker and not message.sticker.is_animated:
         attachment_url = await telegram_bot.get_file_url(message.sticker.file_id)
     elif message.video:
         attachment_url = await telegram_bot.get_file_url(message.video.file_id)
