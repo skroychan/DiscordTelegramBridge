@@ -98,7 +98,12 @@ async def send_to_telegram(username, text, attachments=[], embeds=[], emojis=[],
 
             media_group[0].caption = result
 
-            await telegram_bot.send_media_group(telegram_chat_id, media_group, message_thread_id=telegram_message_thread_id)
+            if len(media_group) <= 10:
+                await telegram_bot.send_media_group(telegram_chat_id, media_group, message_thread_id=telegram_message_thread_id)
+            else:
+                for i in range(0, min(len(media_group), 50), 10):
+                    batch = media_group[i:i+10]
+                    await telegram_bot.send_media_group(telegram_chat_id, batch, message_thread_id=telegram_message_thread_id)
 
         else:
             if emojis:
@@ -152,7 +157,7 @@ class DiscordBot(discord.Client):
         username = message.author.display_name or message.author.global_name or message.author.name
 
         emojis = []
-        for match in re.finditer(r'<a?:[a-zA-Z0-9_]{,32}+:[0-9]{,32}>', text):
+        for match in re.finditer(r'<a?:[a-zA-Z0-9_]{,32}:[0-9]{,32}>', text):
             parsed_emoji = match.group()
             emoji = PartialEmoji.from_str(parsed_emoji)
             text = text.replace(parsed_emoji, f":{emoji.name}:")
