@@ -8,7 +8,9 @@ supported features:
 - [x] media embeds (to some extent)
 - [x] stickers (except vector)
 - [x] custom discord emojis
+- [ ] system messages
 - [ ] forwarded messages
 - [ ] user aliases
-- [ ] multiple bridges support
+- [ ] multiple bridges
 - [ ] custom telegram emoji
+- [ ] markdown
