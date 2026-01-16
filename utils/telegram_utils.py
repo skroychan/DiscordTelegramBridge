@@ -1,8 +1,9 @@
 import re
 
 
-def escape_markdown(str):
-    return re.sub(r"([_\*\[\]\(\)~`>#+\-=|\{\}\.!])", r"\\\1", str)
+def escape_markdown(string):
+    string = string or str()
+    return re.sub(r"([_\*\[\]\(\)~`>#+\-=|\{\}\.!])", r"\\\1", string)
 
 
 def format_message(text, username, quote_text, quote_username):
